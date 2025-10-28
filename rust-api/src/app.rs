@@ -1,67 +1,90 @@
 use axum::{
-    extract::Query,
-    response::{Html, IntoResponse, Response},
+    extract::Json,
+    response::IntoResponse,
     routing::post,
     Router,
-    body::Body,
-    http::{StatusCode, header::{CONTENT_TYPE, HeaderValue}}
 };
 use serde::Deserialize;
-use std::{sync::Arc};
-use tch::{CModule};
-
-pub struct AppState {
-    pub model: CModule,
-}
-
-pub fn create_app(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/", post(homepage))
-        .route("/api/v1/ping", post(ping))
-        .route("/api/v1/recommend", post(recommend))
-        .with_state(state)
-}
-
-async fn homepage() -> impl IntoResponse {
-    Html("<a href='/api/v1/ping'>ping</a>")
-}
-
-async fn ping() -> impl IntoResponse {
-    "pong"
-}
+use std::sync::atomic::{AtomicUsize, Ordering};
+use parking_lot::Mutex;
+use ort::{session::Session, value::Value};
+use ndarray::array;
+use tokio::task;
+use serde_json::json;
+use http::StatusCode;
+use std::sync::Arc;
 
 #[derive(Deserialize)]
-struct RecommendQuery {
-    user_id: String,
-    top_k: Option<usize>,
+pub struct RegressQuery {
+    pub input: f32,
 }
 
-// Dummy function
-async fn recommend(
-    _state: axum::extract::State<Arc<AppState>>,
-    Query(params): Query<RecommendQuery>,
+// --- Session pool ---
+pub struct SessionPool {
+    sessions: Vec<Arc<Mutex<Session>>>,
+    counter: AtomicUsize,
+}
+
+impl SessionPool {
+    pub fn new(sessions: Vec<Session>) -> Self {
+        let sessions = sessions.into_iter().map(|s| Arc::new(Mutex::new(s))).collect();
+        Self {
+            sessions,
+            counter: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn acquire(&self) -> Arc<Mutex<Session>> {
+        let idx = self.counter.fetch_add(1, Ordering::Relaxed) % self.sessions.len();
+        self.sessions[idx].clone()
+    }
+}
+
+// --- Create router ---
+pub fn create_app(pool: Arc<SessionPool>) -> Router {
+    Router::new()
+        .route("/api/v1/regress", post(move |json| regress(json, pool.clone())))
+}
+
+// --- Regression handler ---
+async fn regress(
+    Json(params): Json<RegressQuery>,
+    pool: Arc<SessionPool>,
 ) -> impl IntoResponse {
-    let top_k = params.top_k.unwrap_or(10);
-    if top_k == 0 {
-        return (axum::http::StatusCode::BAD_REQUEST, "Illegal value for top_k").into_response();
+    let prediction = task::spawn_blocking(move || {
+        let session = pool.acquire();
+        let mut session = session.lock();
+
+        // 2D array [1,1] as expected by ONNX
+        // println!("params.input {}", params.input);
+        let input_array = array![[params.input]];
+        // println!("input_array {}", input_array);
+        let mut input_map = std::collections::HashMap::new();
+        // println!("input_map {}", input_map);
+        input_map.insert("input", Value::from_array(input_array)?);
+        // println!("input_map_inserted {}", input_map);
+
+        let outputs = session.run(input_map)?;
+        let arr = outputs[0].try_extract_array::<f32>()?;
+        // println!("arr {}", arr[[0,0]]);
+        Ok::<f32, ort::Error>(arr[[0,0]])
+    })
+    .await
+    .unwrap_or_else(|e| Err(ort::Error::new(e.to_string())));
+
+    match prediction {
+        Ok(pred) => {
+            let body = json!({
+                "input": params.input,
+                "prediction": pred
+            });
+            (StatusCode::OK, axum::Json(body))
+        }
+        Err(e) => {
+            let body = json!({
+                "error": format!("Inference failed: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(body))
+        }
     }
-
-    // Placeholder: Replace with actual predict_groups logic
-    let groups: Vec<String> = (0..top_k).map(|i| format!("group_{}", i)).collect();
-    let scores: Vec<f32> = (0..top_k).map(|i| 1.0 - (i as f32 / top_k as f32)).collect();
-
-    let mut csv = "group_id,score\n".to_string();
-    for (g, s) in groups.iter().zip(scores.iter()) {
-        csv.push_str(&format!("{},{}\n", g, s));
-    }
-
-
-    let mut response = Response::new(Body::from(csv));
-    *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/csv"),
-    );
-
-    response
 }

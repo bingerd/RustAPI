@@ -8,14 +8,14 @@ RUN apt update &&\
     apt install -y cmake clang wget unzip &&\
     rm -rf /var/lib/apt/lists/*
 
-# install libtorch=2.7.0
+# install libtorch=2.9.0 for Linux
 # https://pytorch.org/get-started/locally/
-RUN wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.0%2Bcpu.zip -O libtorch.zip &&\
+RUN wget https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-2.9.0%2Bcpu.zip -O libtorch.zip &&\
     unzip -o libtorch.zip &&\
     rm libtorch.zip
 
 ENV LIBTORCH=/app/libtorch
-ENV LD_LIBRARY_PATH=/app/libtorch/lib:$LD_LIBRARY_PATH
+# ENV LD_LIBRARY_PATH=/app/libtorch/lib:$LD_LIBRARY_PATH
 
 
 # file
