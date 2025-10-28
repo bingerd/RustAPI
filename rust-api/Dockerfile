@@ -8,16 +8,6 @@ RUN apt update &&\
     apt install -y cmake clang wget unzip &&\
     rm -rf /var/lib/apt/lists/*
 
-# install libtorch=2.9.0 for Linux
-# https://pytorch.org/get-started/locally/
-RUN wget https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-2.9.0%2Bcpu.zip -O libtorch.zip &&\
-    unzip -o libtorch.zip &&\
-    rm libtorch.zip
-
-ENV LIBTORCH=/app/libtorch
-# ENV LD_LIBRARY_PATH=/app/libtorch/lib:$LD_LIBRARY_PATH
-
-
 # file
 COPY . .
 
@@ -26,7 +16,6 @@ RUN cargo fetch
 RUN cargo test 
 
 RUN cargo build --release
-
 
 FROM rust:latest
 
@@ -38,18 +27,31 @@ RUN apt update &&\
 
 WORKDIR /app
 
-COPY models .
+COPY models models
 
 # Copy the compiled Rust binary from builder stage
 COPY --from=builder /app/target/release/rust-api /app/rust-api
-
-# Copy the libtorch folder from builder stage
-COPY --from=builder /app/libtorch /app/libtorch
-
-ENV LIBTORCH=/app/libtorch
-ENV LD_LIBRARY_PATH=/app/libtorch/lib:$LD_LIBRARY_PATH
 
 EXPOSE 5000
 
 # Run the binary by default
 CMD ["./rust-api"]
+
+
+# -----------------------------
+# # Runtime stage -> for linux
+# FROM debian:bullseye-slim
+
+# WORKDIR /app
+
+# # Minimal libraries for Rust + ONNX Runtime
+# RUN apt update && \
+#     apt install -y libssl1.1 libgcc1 libstdc++6 libgomp1 libc++1 libc++abi1 && \
+#     rm -rf /var/lib/apt/lists/*
+
+# COPY models models
+# COPY --from=builder /app/target/release/rust-api /app/rust-api
+
+# EXPOSE 5000
+
+# CMD ["./rust-api"]

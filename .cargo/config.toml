@@ -1,7 +1,0 @@
-[env]
-PYTHON_SYS_EXECUTABLE = { value = "/usr/bin/python3", relative = false }
-LIBTORCH_USE_PYTORCH="1"
-LIBTORCH = { value = "/Users/bing/libtorch" , relative = true }
-LIBTORCH_INCLUDE={ value = "/Users/bing/libtorch/" , relative = true }
-LIBTORCH_LIB={ value = "/Users/bing/libtorch/" , relative = true }
-DYLD_LIBRARY_PATH = { value = "/Users/bing/libtorch/lib/" , relative = true }
